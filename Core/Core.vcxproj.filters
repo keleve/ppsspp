@@ -66,7 +66,10 @@
     <ClCompile Include="ELF\ElfReader.cpp">
       <Filter>ELF</Filter>
     </ClCompile>
-    <ClCompile Include="Mips\MIPS.cpp">
+    <ClCompile Include="MIPS\MIPS.cpp">
+      <Filter>MIPS</Filter>
+    </ClCompile>
+    <ClCompile Include="MIPS\IR.cpp">
       <Filter>MIPS</Filter>
     </ClCompile>
     <ClCompile Include="MIPS\MIPSDebugInterface.cpp">
@@ -604,7 +607,10 @@
     <ClInclude Include="MIPS\MIPSDebugInterface.h">
       <Filter>MIPS</Filter>
     </ClInclude>
-    <ClInclude Include="Mips\MIPS.h">
+    <ClInclude Include="MIPS\IR.h">
+      <Filter>MIPS</Filter>
+    </ClInclude>
+    <ClInclude Include="MIPS\MIPS.h">
       <Filter>MIPS</Filter>
     </ClInclude>
     <ClInclude Include="Mips\MIPSDis.h">
