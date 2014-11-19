@@ -35,6 +35,8 @@
 #include "Core/MIPS/IR.h"
 
 class PointerWrap;
+struct ReplacementTableEntry;
+
 
 namespace MIPSComp
 {
@@ -189,11 +191,13 @@ public:
 	}
 
 private:
+	void ExtractIR(u32 address, IRBlock *block);
 	void GetStateAndFlushAll(RegCacheState &state);
 	void RestoreState(const RegCacheState& state);
 	void FlushAll();
 	void FlushPrefixV();
 	void WriteDowncount(int offset = 0);
+	bool CanReplaceJalTo(u32 dest, const ReplacementTableEntry * *entry);
 	bool ReplaceJalTo(u32 dest);
 
 	u32 GetCompilerPC();
