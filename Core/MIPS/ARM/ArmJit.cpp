@@ -304,8 +304,6 @@ const u8 *ArmJit::DoJit(u32 em_address, JitBlock *b)
 		if (entry.flags & IR_FLAG_SKIP)
 			goto skip_entry;
 
-		gpr.SetCompilerPC(entry.origAddress);  // Let it know for log messages
-		fpr.SetCompilerPC(entry.origAddress);
 		js.downcountAmount += MIPSGetInstructionCycleEstimate(entry.op);
 
 		MIPSCompileOp(entry.op);
@@ -389,7 +387,8 @@ void ArmJit::Comp_RunBlock(MIPSOpcode op)
 	ERROR_LOG(JIT, "Comp_RunBlock should never be reached!");
 }
 
-bool Jit::CanReplaceJalTo(u32 dest, const ReplacementTableEntry **entry) {
+bool ArmJit::CanReplaceJalTo(u32 dest, const ReplacementTableEntry **entry) {
+#ifdef ARM
 	MIPSOpcode op(Memory::Read_Opcode_JIT(dest));
 	if (!MIPS_IS_REPLACEMENT(op.encoding))
 		return false;
@@ -406,9 +405,13 @@ bool Jit::CanReplaceJalTo(u32 dest, const ReplacementTableEntry **entry) {
 		return false;
 	}
 	return true;
+#else
+	return false;
+#endif
 }
 
-bool Jit::ReplaceJalTo(u32 dest) {
+bool ArmJit::ReplaceJalTo(u32 dest) {
+#ifdef ARM
 	const ReplacementTableEntry *entry = NULL;
 	if (!CanReplaceJalTo(dest, &entry)) {
 		return false;
