@@ -170,12 +170,13 @@ void ArmJit::EatInstruction(MIPSOpcode op) {
 	}
 
 	js.numInstructions++;
-	js.compilerPC += 4;
+	js.irBlockPos++;
 	js.downcountAmount += MIPSGetInstructionCycleEstimate(op);
 }
 
 void ArmJit::CompileDelaySlot(int flags)
 {
+	IREntry &entry = irblock.entries[js.irBlockPos + 1];
 	// preserve flag around the delay slot! Maybe this is not always necessary on ARM where 
 	// we can (mostly) control whether we set the flag or not. Of course, if someone puts an slt in to the
 	// delay slot, we're screwed.
@@ -183,8 +184,7 @@ void ArmJit::CompileDelaySlot(int flags)
 		MRS(R8);  // Save flags register. R8 is preserved through function calls and is not allocated.
 
 	js.inDelaySlot = true;
-	MIPSOpcode op = GetOffsetInstruction(1);
-	MIPSCompileOp(op);
+	MIPSCompileOp(entry.op);
 	js.inDelaySlot = false;
 
 	if (flags & DELAYSLOT_FLUSH)
@@ -236,17 +236,17 @@ void ArmJit::RunLoopUntil(u64 globalticks)
 }
 
 u32 ArmJit::GetCompilerPC() {
-	return js.compilerPC;
+	return irblock.entries[js.irBlockPos].origAddress;
 }
 
 MIPSOpcode ArmJit::GetOffsetInstruction(int offset) {
-	return Memory::Read_Instruction(GetCompilerPC() + 4 * offset);
+	return irblock.entries[js.irBlockPos + offset].op;
 }
 
 const u8 *ArmJit::DoJit(u32 em_address, JitBlock *b)
 {
 	js.cancel = false;
-	js.blockStart = js.compilerPC = mips_->pc;
+	js.blockStart = mips_->pc;
 	js.lastContinuedPC = 0;
 	js.initialBlockSize = 0;
 	js.nextExit = 0;
@@ -296,24 +296,22 @@ const u8 *ArmJit::DoJit(u32 em_address, JitBlock *b)
 	int partialFlushOffset = 0;
 
 	js.numInstructions = 0;
-	while (js.compiling)
-	{
-		gpr.SetCompilerPC(GetCompilerPC());  // Let it know for log messages
-		MIPSOpcode inst = Memory::Read_Opcode_JIT(GetCompilerPC());
-		//MIPSInfo info = MIPSGetInfo(inst);
-		//if (info & IS_VFPU) {
-		//	logBlocks = 1;
-		//}
+	js.irBlock = &irblock;
+	js.irBlockPos = 0;
+	while (js.irBlockPos < irblock.entries.size() && js.compiling) {
+		// Jit breakpoints are quite fast, so let's do them in release too.
+		IREntry &entry = irblock.entries[js.irBlockPos];
+		if (entry.flags & IR_FLAG_SKIP)
+			goto skip_entry;
 
-		js.downcountAmount += MIPSGetInstructionCycleEstimate(inst);
+		gpr.SetCompilerPC(entry.origAddress);  // Let it know for log messages
+		fpr.SetCompilerPC(entry.origAddress);
+		js.downcountAmount += MIPSGetInstructionCycleEstimate(entry.op);
 
-		MIPSCompileOp(inst);
+		MIPSCompileOp(entry.op);
 	
-		js.compilerPC += 4;
-		js.numInstructions++;
 #ifndef HAVE_ARMV7
-		if ((GetCodePtr() - b->checkedEntry - partialFlushOffset) > 3200)
-		{
+		if ((GetCodePtr() - b->checkedEntry - partialFlushOffset) > 3200) {
 			// We need to prematurely flush as we are out of range
 			FixupBranch skip = B_CC(CC_AL);
 			FlushLitPool();
@@ -322,13 +320,9 @@ const u8 *ArmJit::DoJit(u32 em_address, JitBlock *b)
 		}
 #endif
 
-		// Safety check, in case we get a bunch of really large jit ops without a lot of branching.
-		if (GetSpaceLeft() < 0x800 || js.numInstructions >= JitBlockCache::MAX_BLOCK_INSTRUCTIONS)
-		{
-			FlushAll();
-			WriteExit(GetCompilerPC(), js.nextExit++);
-			js.compiling = false;
-		}
+skip_entry:
+		js.irBlockPos++;
+		js.numInstructions++;
 	}
 
 	if (jo.useForwardJump) {
@@ -395,21 +389,28 @@ void ArmJit::Comp_RunBlock(MIPSOpcode op)
 	ERROR_LOG(JIT, "Comp_RunBlock should never be reached!");
 }
 
-bool ArmJit::ReplaceJalTo(u32 dest) {
-#ifdef ARM
+bool Jit::CanReplaceJalTo(u32 dest, const ReplacementTableEntry **entry) {
 	MIPSOpcode op(Memory::Read_Opcode_JIT(dest));
 	if (!MIPS_IS_REPLACEMENT(op.encoding))
 		return false;
 
 	int index = op.encoding & MIPS_EMUHACK_VALUE_MASK;
-	const ReplacementTableEntry *entry = GetReplacementFunc(index);
-	if (!entry) {
+	*entry = GetReplacementFunc(index);
+	if (!*entry) {
 		ERROR_LOG(HLE, "ReplaceJalTo: Invalid replacement op %08x at %08x", op.encoding, dest);
 		return false;
 	}
 
-	if (entry->flags & (REPFLAG_HOOKENTER | REPFLAG_HOOKEXIT | REPFLAG_DISABLED)) {
+	if ((*entry)->flags & (REPFLAG_HOOKENTER | REPFLAG_HOOKEXIT | REPFLAG_DISABLED)) {
 		// If it's a hook, we can't replace the jal, we have to go inside the func.
+		return false;
+	}
+	return true;
+}
+
+bool Jit::ReplaceJalTo(u32 dest) {
+	const ReplacementTableEntry *entry = NULL;
+	if (!CanReplaceJalTo(dest, &entry)) {
 		return false;
 	}
 
@@ -438,8 +439,7 @@ bool ArmJit::ReplaceJalTo(u32 dest) {
 		WriteDownCountR(R0);
 	}
 
-	js.compilerPC += 4;
-	// No writing exits, keep going!
+	js.irBlockPos++;
 
 	// Add a trigger so that if the inlined code changes, we invalidate this block.
 	blocks.ProxyBlock(js.blockStart, dest, symbolMap.GetFunctionSize(dest) / sizeof(u32), GetCodePtr());
