@@ -189,7 +189,6 @@ private:
 	void FlushAll();
 	void FlushPrefixV();
 	void WriteDowncount(int offset = 0);
-	bool CanReplaceJalTo(u32 dest, const ReplacementTableEntry * *entry);
 	bool ReplaceJalTo(u32 dest);
 
 	u32 GetCompilerPC();
